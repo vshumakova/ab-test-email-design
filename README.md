@@ -70,7 +70,7 @@
 ---
 
 ## Структура проекта
-'''
+```bash
 ab-test-email-design/
 ├── notebooks/ # Jupyter-ноутбуки с анализом
 │ ├── 01_eda.ipynb
@@ -80,9 +80,7 @@ ab-test-email-design/
 ├── reports/ # Графики и презентации
 ├── data/ # Данные (только ссылки)
 └── requirements.txt
-'''
-
----
+```
 
 ## Как воспроизвести
 
@@ -95,5 +93,5 @@ pip install -r requirements.txt
 
 # 3. Скачать данные (ссылка в data/README.md)
 # 4. Запустить ноутбуки в порядке нумерации
-'''
+```
 
