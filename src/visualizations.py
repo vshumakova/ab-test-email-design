@@ -14,7 +14,6 @@ def set_style():
     sns.set_palette(['#2E86AB', '#E84855', '#06A77D', '#F18F01'])
     
     # Настройка шрифтов
-    plt.rcParams['font.family'] = 'Arial'
     plt.rcParams['font.size'] = 11
     plt.rcParams['axes.labelsize'] = 12
     plt.rcParams['axes.titlesize'] = 14
@@ -75,7 +74,6 @@ def plot_daily_conversion(df_results, save_path=None):
     if save_path:
         plt.savefig(save_path, dpi=150, bbox_inches='tight')
     
-    plt.show()
     return fig
 
 
@@ -146,7 +144,6 @@ def plot_weekly_difference(df_results, anomaly_weeks=None, save_path=None):
     if save_path:
         plt.savefig(save_path, dpi=150, bbox_inches='tight')
     
-    plt.show()
     return fig
 
 
@@ -216,7 +213,6 @@ def plot_bayesian_posterior(control_clicks, control_users,
     if save_path:
         plt.savefig(save_path, dpi=150, bbox_inches='tight')
     
-    plt.show()
     return fig
 
 
@@ -267,7 +263,6 @@ def plot_stratification(df_results, save_path=None):
     if save_path:
         plt.savefig(save_path, dpi=150, bbox_inches='tight')
     
-    plt.show()
     return fig
 
 
@@ -343,7 +338,6 @@ def plot_sample_size_vs_mde(baseline_rate=0.078, alpha=0.05, power=0.90,
     if save_path:
         plt.savefig(save_path, dpi=150, bbox_inches='tight')
     
-    plt.show()
     return fig
 
 
@@ -406,5 +400,4 @@ def plot_confidence_intervals(control_rate, treatment_rate, se, save_path=None):
     if save_path:
         plt.savefig(save_path, dpi=150, bbox_inches='tight')
     
-    plt.show()
     return fig
