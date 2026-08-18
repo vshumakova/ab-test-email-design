@@ -7,14 +7,16 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-import plotly.express as px
 from plotly.subplots import make_subplots
 from scipy import stats
 from scipy.stats import beta
 import warnings
 warnings.filterwarnings('ignore')
 
-# Настройка страницы
+# ============================================
+# НАСТРОЙКА СТРАНИЦЫ
+# ============================================
+
 st.set_page_config(
     page_title="A/B Test Dashboard",
     page_icon="📊",
@@ -22,45 +24,132 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Загрузка данных
+# ============================================
+# ЗАГРУЗКА ДАННЫХ
+# ============================================
+
 @st.cache_data
 def load_data():
-    """Загрузка и кэширование данных"""
-    try:
-        # Пробуем загрузить из разных мест
-        import os
-        paths = [
-            'data/results.csv',
-            '../data/results.csv',
-            'results.csv'
-        ]
-        for path in paths:
-            if os.path.exists(path):
-                df = pd.read_csv(path)
-                df['date'] = pd.to_datetime(df['date'], dayfirst=True)
-                return df
-        st.error("❌ Файл results.csv не найден!")
-        return None
-    except Exception as e:
-        st.error(f"❌ Ошибка загрузки: {e}")
-        return None
+    """Загрузка данных с кэшированием"""
+    import os
+    paths = ['data/results.csv', '../data/results.csv', 'results.csv']
+    for path in paths:
+        if os.path.exists(path):
+            df = pd.read_csv(path)
+            df['date'] = pd.to_datetime(df['date'], dayfirst=True)
+            return df
+    return None
 
 df = load_data()
 
 if df is None:
+    st.error("❌ Файл results.csv не найден!")
     st.stop()
 
-# Расчет метрик
+# ============================================
+# БОКОВАЯ ПАНЕЛЬ (С ПРАВИЛЬНЫМИ ФИЛЬТРАМИ)
+# ============================================
+
+with st.sidebar:
+    st.title("📊 A/B Test Dashboard")
+    st.markdown("---")
+    
+    # Информация о данных
+    st.subheader("📁 Данные")
+    st.info(
+        f"""
+        **Период:** {df['date'].min().strftime('%d.%m.%Y')} - {df['date'].max().strftime('%d.%m.%Y')}
+        **Строк:** {len(df):,}
+        """
+    )
+    
+    st.markdown("---")
+    
+    # 🔥 ФИЛЬТРЫ (ОБНОВЛЯЮТ ДАННЫЕ)
+    st.subheader("🔍 Фильтры")
+    
+    # Тип пользователя
+    user_types = ['Все'] + sorted(df['user_type'].unique().tolist())
+    selected_user_type = st.selectbox(
+        "Тип пользователя", 
+        user_types,
+        index=0,
+        key='user_type_filter'
+    )
+    
+    # Период
+    min_date = df['date'].min()
+    max_date = df['date'].max()
+    
+    date_range = st.date_input(
+        "Период",
+        value=(min_date, max_date),
+        min_value=min_date,
+        max_value=max_date,
+        key='date_range_filter'
+    )
+    
+    st.markdown("---")
+    
+    # Статус эксперимента
+    st.subheader("🎯 Статус")
+    
+    # Быстрый расчет для статуса
+    control = df[df['group'] == 'control']
+    treatment = df[df['group'] == 'treatment']
+    n_control = len(control)
+    n_treatment = len(treatment)
+    clicks_control = control['converted'].sum()
+    clicks_treatment = treatment['converted'].sum()
+    cr_control = clicks_control / n_control
+    cr_treatment = clicks_treatment / n_treatment
+    
+    p_pool = (clicks_control + clicks_treatment) / (n_control + n_treatment)
+    se = np.sqrt(p_pool * (1 - p_pool) * (1/n_control + 1/n_treatment))
+    z_stat = (cr_treatment - cr_control) / se
+    p_value = 1 - stats.norm.cdf(z_stat)
+    
+    if p_value < 0.05:
+        st.success("✅ Статистически значим")
+    else:
+        st.error("❌ Не значим")
+    
+    st.markdown("---")
+    
+    # Кнопка обновления (на всякий случай)
+    if st.button("🔄 Обновить данные", use_container_width=True):
+        st.cache_data.clear()
+        st.rerun()
+
+# ============================================
+# ПРИМЕНЕНИЕ ФИЛЬТРОВ К ДАННЫМ
+# ============================================
+
+# 🔥 ГЛАВНОЕ: Фильтруем данные на основе выбора в боковой панели
+filtered_df = df.copy()
+
+# Фильтр по типу пользователя
+if selected_user_type != 'Все':
+    filtered_df = filtered_df[filtered_df['user_type'] == selected_user_type]
+
+# Фильтр по дате
+if len(date_range) == 2:
+    start_date, end_date = date_range
+    filtered_df = filtered_df[
+        (filtered_df['date'] >= pd.to_datetime(start_date)) &
+        (filtered_df['date'] <= pd.to_datetime(end_date))
+    ]
+
+# ============================================
+# РАСЧЕТ МЕТРИК ДЛЯ ОТФИЛЬТРОВАННЫХ ДАННЫХ
+# ============================================
+
 @st.cache_data
-def calculate_metrics(df):
-    """Расчет всех метрик"""
-    
-    # Базовые расчеты
+def calculate_metrics(df_filtered):
+    """Расчет всех метрик для отфильтрованных данных"""
+    df = df_filtered.copy()
     df['week'] = df['date'].dt.isocalendar().week
-    df['weekday'] = df['date'].dt.day_name()
-    df['month'] = df['date'].dt.month_name()
     
-    # Общая статистика
     control = df[df['group'] == 'control']
     treatment = df[df['group'] == 'treatment']
     
@@ -68,15 +157,16 @@ def calculate_metrics(df):
     n_treatment = len(treatment)
     clicks_control = control['converted'].sum()
     clicks_treatment = treatment['converted'].sum()
-    cr_control = clicks_control / n_control
-    cr_treatment = clicks_treatment / n_treatment
+    
+    cr_control = clicks_control / n_control if n_control > 0 else 0
+    cr_treatment = clicks_treatment / n_treatment if n_treatment > 0 else 0
     diff_abs = cr_treatment - cr_control
-    diff_rel = (cr_treatment / cr_control - 1) * 100
+    diff_rel = (cr_treatment / cr_control - 1) * 100 if cr_control > 0 else 0
     
     # Z-test
-    p_pool = (clicks_control + clicks_treatment) / (n_control + n_treatment)
-    se = np.sqrt(p_pool * (1 - p_pool) * (1/n_control + 1/n_treatment))
-    z_stat = (cr_treatment - cr_control) / se
+    p_pool = (clicks_control + clicks_treatment) / (n_control + n_treatment) if (n_control + n_treatment) > 0 else 0.5
+    se = np.sqrt(p_pool * (1 - p_pool) * (1/n_control + 1/n_treatment)) if n_control > 0 and n_treatment > 0 else 0
+    z_stat = (cr_treatment - cr_control) / se if se > 0 else 0
     p_value = 1 - stats.norm.cdf(z_stat)
     
     # Доверительный интервал
@@ -91,7 +181,6 @@ def calculate_metrics(df):
     post_control = beta.rvs(a_control, b_control, size=100000)
     post_treatment = beta.rvs(a_treatment, b_treatment, size=100000)
     prob_better = np.mean(post_treatment > post_control)
-    expected_loss = np.mean(np.maximum(0, post_control - post_treatment))
     
     # Ежедневная статистика
     daily_stats = df.groupby(['date', 'group']).agg(
@@ -101,9 +190,7 @@ def calculate_metrics(df):
     ).reset_index()
     
     daily_pivot = daily_stats.pivot(index='date', columns='group', values='cr')
-    daily_users = daily_stats.pivot(index='date', columns='group', values='users')
-    daily_clicks = daily_stats.pivot(index='date', columns='group', values='clicks')
-    daily_diff = daily_pivot['treatment'] - daily_pivot['control']
+    daily_diff = daily_pivot['treatment'] - daily_pivot['control'] if 'treatment' in daily_pivot.columns and 'control' in daily_pivot.columns else pd.Series()
     
     # Недельная статистика
     weekly_stats = df.groupby(['week', 'group']).agg(
@@ -113,24 +200,22 @@ def calculate_metrics(df):
     ).reset_index()
     
     weekly_pivot = weekly_stats.pivot(index='week', columns='group', values='cr')
-    weekly_pivot['diff'] = weekly_pivot['treatment'] - weekly_pivot['control']
-    weekly_pivot['rel'] = (weekly_pivot['treatment'] / weekly_pivot['control'] - 1) * 100
+    weekly_pivot['diff'] = weekly_pivot['treatment'] - weekly_pivot['control'] if 'treatment' in weekly_pivot.columns and 'control' in weekly_pivot.columns else 0
     
     # Сегментация
     segmented = df.groupby(['group', 'user_type'])['converted'].mean().unstack(fill_value=0)
-    segmented_counts = df.groupby(['group', 'user_type']).size().unstack(fill_value=0)
     
-    # Ежедневный баланс
+    # Баланс
     daily_balance = df.groupby(['date', 'group']).size().unstack(fill_value=0)
-    daily_balance['total'] = daily_balance['control'] + daily_balance['treatment']
-    daily_balance['control_pct'] = daily_balance['control'] / daily_balance['total'] * 100
-    daily_balance['treatment_pct'] = daily_balance['treatment'] / daily_balance['total'] * 100
     
-    # SRM-тест
+    # SRM
     total = n_control + n_treatment
     expected = total / 2
-    chi2 = ((n_control - expected) ** 2 + (n_treatment - expected) ** 2) / expected
-    srm_p_value = 1 - stats.chi2.cdf(chi2, df=1)
+    if total > 0 and expected > 0:
+        chi2 = ((n_control - expected) ** 2 + (n_treatment - expected) ** 2) / expected
+        srm_p_value = 1 - stats.chi2.cdf(chi2, df=1)
+    else:
+        srm_p_value = 1.0
     
     return {
         'n_control': n_control,
@@ -145,80 +230,65 @@ def calculate_metrics(df):
         'ci_lower': ci_lower,
         'ci_upper': ci_upper,
         'prob_better': prob_better,
-        'expected_loss': expected_loss,
         'daily_pivot': daily_pivot,
-        'daily_users': daily_users,
-        'daily_clicks': daily_clicks,
         'daily_diff': daily_diff,
         'weekly_pivot': weekly_pivot,
         'segmented': segmented,
-        'segmented_counts': segmented_counts,
         'daily_balance': daily_balance,
-        'srm_p_value': srm_p_value
+        'srm_p_value': srm_p_value,
+        'total_rows': len(df)
     }
 
-metrics = calculate_metrics(df)
+# 🔥 Пересчет метрик при изменении фильтров
+metrics = calculate_metrics(filtered_df)
 
-# Функции для графиков
+# ============================================
+# ФУНКЦИИ ДЛЯ ГРАФИКОВ
+# ============================================
+
 def create_daily_cr_figure(daily_pivot):
-    """График динамики конверсии"""
     fig = go.Figure()
     
-    fig.add_trace(go.Scatter(
-        x=daily_pivot.index,
-        y=daily_pivot['control'],
-        name='Control',
-        mode='lines+markers',
-        line=dict(color='#2E86AB', width=3),
-        marker=dict(size=6, color='#2E86AB', symbol='circle')
-    ))
+    if 'control' in daily_pivot.columns:
+        fig.add_trace(go.Scatter(
+            x=daily_pivot.index,
+            y=daily_pivot['control'],
+            name='Control',
+            mode='lines+markers',
+            line=dict(color='#2E86AB', width=3),
+            marker=dict(size=6)
+        ))
     
-    fig.add_trace(go.Scatter(
-        x=daily_pivot.index,
-        y=daily_pivot['treatment'],
-        name='Treatment',
-        mode='lines+markers',
-        line=dict(color='#E84855', width=3),
-        marker=dict(size=6, color='#E84855', symbol='diamond')
-    ))
-    
-    # Средние линии
-    fig.add_hline(
-        y=daily_pivot['control'].mean(),
-        line=dict(color='#2E86AB', dash='dash', width=1.5)
-    )
-    fig.add_hline(
-        y=daily_pivot['treatment'].mean(),
-        line=dict(color='#E84855', dash='dash', width=1.5)
-    )
+    if 'treatment' in daily_pivot.columns:
+        fig.add_trace(go.Scatter(
+            x=daily_pivot.index,
+            y=daily_pivot['treatment'],
+            name='Treatment',
+            mode='lines+markers',
+            line=dict(color='#E84855', width=3),
+            marker=dict(size=6)
+        ))
     
     fig.update_layout(
-        title=dict(
-            text='📈 Динамика конверсии по дням',
-            font=dict(size=16, color='#2C3E50')
-        ),
-        xaxis_title='Дата',
+        title='📈 Динамика конверсии по дням',
         yaxis_title='Конверсия',
         yaxis_tickformat='.0%',
+        height=400,
         template='plotly_white',
-        height=450,
-        legend=dict(
-            orientation='h',
-            yanchor='bottom',
-            y=1.02,
-            xanchor='center',
-            x=0.5
-        ),
         hovermode='x unified',
-        margin=dict(l=40, r=40, t=60, b=40)
+        legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='center', x=0.5)
     )
     return fig
 
 
 def create_daily_diff_figure(daily_diff):
-    """График разницы конверсий"""
-    colors = ['#06A77D' if x > 0 else '#E84855' for x in daily_diff]
+    if len(daily_diff) == 0:
+        fig = go.Figure()
+        fig.add_annotation(text="Нет данных для отображения", showarrow=False)
+        fig.update_layout(height=400)
+        return fig
     
+    colors = ['#06A77D' if x > 0 else '#E84855' for x in daily_diff]
     fig = go.Figure()
     fig.add_trace(go.Bar(
         x=daily_diff.index,
@@ -227,155 +297,70 @@ def create_daily_diff_figure(daily_diff):
         opacity=0.8,
         name='Разница (T-C)'
     ))
-    
-    fig.add_hline(
-        y=0,
-        line=dict(color='gray', dash='solid', width=1.5)
-    )
-    fig.add_hline(
-        y=daily_diff.mean(),
-        line=dict(color='#06A77D', dash='dash', width=2)
-    )
-    
+    fig.add_hline(y=0, line=dict(color='gray', dash='solid', width=1.5))
     fig.update_layout(
-        title=dict(
-            text='Разница конверсий (Treatment - Control)',
-            font=dict(size=16, color='#2C3E50')
-        ),
-        xaxis_title='Дата',
+        title='Разница конверсий (Treatment - Control)',
         yaxis_title='Разница, п.п.',
         yaxis_tickformat='+.1%',
+        height=400,
         template='plotly_white',
-        height=450,
-        hovermode='x unified',
-        margin=dict(l=40, r=40, t=60, b=40)
-    )
-    return fig
-
-
-def create_weekly_figure(weekly_pivot):
-    """График недельной динамики"""
-    colors = ['#E84855' if x < 0 else '#2E86AB' for x in weekly_pivot['diff']]
-    
-    fig = go.Figure()
-    fig.add_trace(go.Bar(
-        x=weekly_pivot.index,
-        y=weekly_pivot['diff'],
-        marker_color=colors,
-        opacity=0.8,
-        name='Недельная разница'
-    ))
-    
-    fig.add_hline(
-        y=0,
-        line=dict(color='gray', dash='solid', width=1.5)
-    )
-    fig.add_hline(
-        y=weekly_pivot['diff'].mean(),
-        line=dict(color='#06A77D', dash='dash', width=2)
-    )
-    
-    # Добавляем значения
-    for week, diff in weekly_pivot['diff'].items():
-        fig.add_annotation(
-            x=week,
-            y=diff,
-            text=f'{diff:+.1%}',
-            showarrow=False,
-            font=dict(size=9, color='#2C3E50'),
-            yshift=10 if diff > 0 else -10
-        )
-    
-    fig.update_layout(
-        title=dict(
-            text='Динамика эффекта по неделям',
-            font=dict(size=16, color='#2C3E50')
-        ),
-        xaxis_title='Неделя',
-        yaxis_title='Разница (T-C), п.п.',
-        yaxis_tickformat='+.1%',
-        template='plotly_white',
-        height=350,
-        hovermode='x unified',
-        margin=dict(l=40, r=40, t=60, b=40)
+        hovermode='x unified'
     )
     return fig
 
 
 def create_balance_figure(daily_balance):
-    """График баланса групп"""
     fig = go.Figure()
     
-    fig.add_trace(go.Scatter(
-        x=daily_balance.index,
-        y=daily_balance['control_pct'],
-        name='Control %',
-        mode='lines+markers',
-        line=dict(color='#2E86AB', width=2.5),
-        marker=dict(size=6)
-    ))
+    if 'control' in daily_balance.columns:
+        fig.add_trace(go.Bar(
+            x=daily_balance.index,
+            y=daily_balance['control'],
+            name='Control',
+            marker_color='#2E86AB',
+            opacity=0.6
+        ))
     
-    fig.add_trace(go.Scatter(
-        x=daily_balance.index,
-        y=daily_balance['treatment_pct'],
-        name='Treatment %',
-        mode='lines+markers',
-        line=dict(color='#E84855', width=2.5),
-        marker=dict(size=6)
-    ))
-    
-    fig.add_hline(
-        y=50,
-        line=dict(color='green', dash='dash', width=2),
-        annotation_text='Ожидание 50/50',
-        annotation_position='bottom right'
-    )
-    
-    # Добавляем зону нормы
-    fig.add_hrect(
-        y0=45, y1=55,
-        fillcolor='rgba(6, 167, 125, 0.1)',
-        line_width=0,
-        annotation_text='Зона нормы'
-    )
+    if 'treatment' in daily_balance.columns:
+        fig.add_trace(go.Bar(
+            x=daily_balance.index,
+            y=daily_balance['treatment'],
+            name='Treatment',
+            marker_color='#E84855',
+            opacity=0.6
+        ))
     
     fig.update_layout(
-        title=dict(
-            text='Баланс групп по дням',
-            font=dict(size=16, color='#2C3E50')
-        ),
-        xaxis_title='Дата',
-        yaxis_title='Доля пользователей, %',
-        template='plotly_white',
+        title='Баланс групп по дням',
+        yaxis_title='Количество пользователей',
         height=350,
-        legend=dict(
-            orientation='h',
-            yanchor='bottom',
-            y=1.02,
-            xanchor='center',
-            x=0.5
-        ),
-        hovermode='x unified',
-        margin=dict(l=40, r=40, t=60, b=40)
+        template='plotly_white',
+        barmode='group',
+        legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='center', x=0.5)
     )
     return fig
 
 
 def create_segmentation_figure(segmented):
-    """График стратификации"""
     fig = go.Figure()
+    
+    if len(segmented) == 0:
+        fig.add_annotation(text="Нет данных для отображения", showarrow=False)
+        fig.update_layout(height=350)
+        return fig
     
     groups = ['control', 'treatment']
     group_labels = ['Control', 'Treatment']
-    user_types = segmented.columns.tolist()
+    colors = {'new': '#F39C12', 'old': '#8E44AD'}
     
-    colors = {
-        'new': '#F39C12',
-        'old': '#8E44AD'
-    }
-    
-    for user_type in user_types:
-        values = [segmented.loc[group, user_type] for group in groups]
+    for user_type in segmented.columns:
+        values = []
+        for group in groups:
+            if group in segmented.index and user_type in segmented.columns:
+                values.append(segmented.loc[group, user_type])
+            else:
+                values.append(0)
+        
         fig.add_trace(go.Bar(
             x=group_labels,
             y=values,
@@ -387,174 +372,20 @@ def create_segmentation_figure(segmented):
         ))
     
     fig.update_layout(
-        title=dict(
-            text='Стратификация по типу пользователя',
-            font=dict(size=16, color='#2C3E50')
-        ),
-        xaxis_title='Группа',
+        title='Стратификация по типу пользователя',
         yaxis_title='Конверсия',
         yaxis_tickformat='.0%',
-        template='plotly_white',
         height=350,
+        template='plotly_white',
         barmode='group',
-        legend=dict(
-            orientation='h',
-            yanchor='bottom',
-            y=1.02,
-            xanchor='center',
-            x=0.5
-        ),
-        margin=dict(l=40, r=40, t=60, b=40)
+        legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='center', x=0.5)
     )
     return fig
 
+# ============================================
+# ОСНОВНОЙ КОНТЕНТ
+# ============================================
 
-def create_bayesian_figure(metrics):
-    """График байесовских распределений"""
-    # Генерируем распределения заново для визуализации
-    a_c, b_c = metrics['clicks_control'] + 1, metrics['n_control'] - metrics['clicks_control'] + 1
-    a_t, b_t = metrics['clicks_treatment'] + 1, metrics['n_treatment'] - metrics['clicks_treatment'] + 1
-    
-    x = np.linspace(0, 0.20, 1000)
-    y_c = beta.pdf(x, a_c, b_c)
-    y_t = beta.pdf(x, a_t, b_t)
-    
-    fig = go.Figure()
-    
-    fig.add_trace(go.Scatter(
-        x=x,
-        y=y_c,
-        name='Control',
-        fill='tozeroy',
-        line=dict(color='#2E86AB', width=2.5),
-        fillcolor='rgba(46, 134, 171, 0.3)'
-    ))
-    
-    fig.add_trace(go.Scatter(
-        x=x,
-        y=y_t,
-        name='Treatment',
-        fill='tozeroy',
-        line=dict(color='#E84855', width=2.5),
-        fillcolor='rgba(232, 72, 85, 0.3)'
-    ))
-    
-    # Медианы
-    median_c = beta.median(a_c, b_c)
-    median_t = beta.median(a_t, b_t)
-    
-    fig.add_vline(x=median_c, line=dict(color='#2E86AB', dash='dash', width=1.5))
-    fig.add_vline(x=median_t, line=dict(color='#E84855', dash='dash', width=1.5))
-    
-    fig.update_layout(
-        title=dict(
-            text='Апостериорные распределения конверсии',
-            font=dict(size=16, color='#2C3E50')
-        ),
-        xaxis_title='Конверсия',
-        yaxis_title='Плотность',
-        xaxis_tickformat='.0%',
-        template='plotly_white',
-        height=350,
-        legend=dict(
-            orientation='h',
-            yanchor='bottom',
-            y=1.02,
-            xanchor='center',
-            x=0.5
-        ),
-        margin=dict(l=40, r=40, t=60, b=40)
-    )
-    return fig
-
-
-def create_distribution_metrics(metrics):
-    """Создание метрик для отображения распределений"""
-    a_c, b_c = metrics['clicks_control'] + 1, metrics['n_control'] - metrics['clicks_control'] + 1
-    a_t, b_t = metrics['clicks_treatment'] + 1, metrics['n_treatment'] - metrics['clicks_treatment'] + 1
-    
-    return {
-        'control': {
-            'mean': a_c / (a_c + b_c),
-            'median': beta.median(a_c, b_c),
-            'hdi_lower': beta.ppf(0.025, a_c, b_c),
-            'hdi_upper': beta.ppf(0.975, a_c, b_c)
-        },
-        'treatment': {
-            'mean': a_t / (a_t + b_t),
-            'median': beta.median(a_t, b_t),
-            'hdi_lower': beta.ppf(0.025, a_t, b_t),
-            'hdi_upper': beta.ppf(0.975, a_t, b_t)
-        }
-    }
-
-
-# Боковая панель
-st.sidebar.title("📊 A/B Test Dashboard")
-st.sidebar.markdown("---")
-
-# Информация о датасете
-st.sidebar.subheader("📁 Данные")
-st.sidebar.info(
-    f"""
-    **Период:** {df['date'].min().strftime('%d.%m.%Y')} - {df['date'].max().strftime('%d.%m.%Y')}
-    **Строк:** {len(df):,}
-    **Группы:** Control ({metrics['n_control']:,}), Treatment ({metrics['n_treatment']:,})
-    """
-)
-
-# Фильтры
-st.sidebar.markdown("---")
-st.sidebar.subheader("🔍 Фильтры")
-
-user_types = ['Все'] + list(df['user_type'].unique())
-selected_user_type = st.sidebar.selectbox("Тип пользователя", user_types)
-
-# Выбор дат
-date_range = st.sidebar.date_input(
-    "Период",
-    value=(df['date'].min(), df['date'].max()),
-    min_value=df['date'].min(),
-    max_value=df['date'].max()
-)
-
-st.sidebar.markdown("---")
-
-# Статус эксперимента
-st.sidebar.subheader("🎯 Статус")
-if metrics['p_value'] < 0.05:
-    st.sidebar.success("✅ Статистически значим")
-else:
-    st.sidebar.error("❌ Не значим")
-
-if metrics['srm_p_value'] >= 0.05:
-    st.sidebar.success("✅ SRM пройден")
-else:
-    st.sidebar.error("❌ SRM нарушен")
-
-# Применение фильтров
-filtered_df = df.copy()
-if selected_user_type != 'Все':
-    filtered_df = filtered_df[filtered_df['user_type'] == selected_user_type]
-
-if len(date_range) == 2:
-    start_date, end_date = date_range
-    filtered_df = filtered_df[
-        (filtered_df['date'] >= pd.to_datetime(start_date)) &
-        (filtered_df['date'] <= pd.to_datetime(end_date))
-    ]
-
-# Пересчет метрик для отфильтрованных данных
-if len(filtered_df) > 0:
-    f_control = filtered_df[filtered_df['group'] == 'control']
-    f_treatment = filtered_df[filtered_df['group'] == 'treatment']
-    f_cr_c = f_control['converted'].sum() / len(f_control) if len(f_control) > 0 else 0
-    f_cr_t = f_treatment['converted'].sum() / len(f_treatment) if len(f_treatment) > 0 else 0
-    f_diff = f_cr_t - f_cr_c
-else:
-    f_cr_c = f_cr_t = f_diff = 0
-
-# Основной контент
 # Заголовок
 st.title("📊 A/B Тестирование дизайна email-рассылки")
 st.caption("Анализ влияния нового дизайна на конверсию пользователей")
@@ -567,7 +398,7 @@ col1, col2, col3, col4, col5 = st.columns(5)
 with col1:
     st.metric(
         label="Конверсия Control",
-        value=f"{metrics['cr_control']:.2%}",
+        value=f"{metrics['cr_control']:.2%}" if metrics['cr_control'] > 0 else "0.00%",
         delta=f"{metrics['n_control']:,} пользователей",
         delta_color="off"
     )
@@ -575,7 +406,7 @@ with col1:
 with col2:
     st.metric(
         label="Конверсия Treatment",
-        value=f"{metrics['cr_treatment']:.2%}",
+        value=f"{metrics['cr_treatment']:.2%}" if metrics['cr_treatment'] > 0 else "0.00%",
         delta=f"{metrics['n_treatment']:,} пользователей",
         delta_color="off"
     )
@@ -604,7 +435,7 @@ with col5:
         delta_color="off"
     )
 
-# Первый ряд графиков
+# Графики
 col1, col2 = st.columns([2, 1])
 
 with col1:
@@ -613,7 +444,6 @@ with col1:
 with col2:
     st.plotly_chart(create_daily_diff_figure(metrics['daily_diff']), use_container_width=True)
 
-# Второй ряд графиков
 col1, col2 = st.columns(2)
 
 with col1:
@@ -622,196 +452,38 @@ with col1:
 with col2:
     st.plotly_chart(create_segmentation_figure(metrics['segmented']), use_container_width=True)
 
-# Третий ряд графиков
-col1, col2 = st.columns([2, 1])
-
-with col1:
-    st.plotly_chart(create_weekly_figure(metrics['weekly_pivot']), use_container_width=True)
-
-with col2:
-    st.plotly_chart(create_bayesian_figure(metrics), use_container_width=True)
-
-# Байесовская таблица
-st.markdown("### 📊 Байесовские распределения")
-
-bayes_metrics = create_distribution_metrics(metrics)
-
-bayes_df = pd.DataFrame({
-    'Параметр': ['Среднее', 'Медиана', 'HDI (2.5%)', 'HDI (97.5%)'],
-    'Control': [
-        f"{bayes_metrics['control']['mean']:.2%}",
-        f"{bayes_metrics['control']['median']:.2%}",
-        f"{bayes_metrics['control']['hdi_lower']:.2%}",
-        f"{bayes_metrics['control']['hdi_upper']:.2%}"
-    ],
-    'Treatment': [
-        f"{bayes_metrics['treatment']['mean']:.2%}",
-        f"{bayes_metrics['treatment']['median']:.2%}",
-        f"{bayes_metrics['treatment']['hdi_lower']:.2%}",
-        f"{bayes_metrics['treatment']['hdi_upper']:.2%}"
-    ]
-})
-
-st.dataframe(bayes_df, hide_index=True, use_container_width=True)
-
-# Доверительный интервал
-st.markdown("### 📏 Доверительный интервал")
-
-fig_ci = go.Figure()
-
-fig_ci.add_trace(go.Scatter(
-    x=[0],
-    y=[0],
-    mode='markers',
-    marker=dict(size=20, color='#2E86AB'),
-    name=f'Разница: {metrics["diff_abs"]:+.2%}'
-))
-
-fig_ci.add_trace(go.Scatter(
-    x=[metrics['ci_lower'], metrics['ci_upper']],
-    y=[0, 0],
-    mode='lines',
-    line=dict(color='#2E86AB', width=8),
-    name=f'95% CI: [{metrics["ci_lower"]:+.2%}, {metrics["ci_upper"]:+.2%}]'
-))
-
-# Добавляем вертикальную линию на 0
-fig_ci.add_vline(x=0, line=dict(color='gray', dash='solid', width=1.5))
-
-# Добавляем аннотации
-fig_ci.add_annotation(
-    x=metrics['ci_lower'],
-    y=0,
-    text=f'{metrics["ci_lower"]:+.2%}',
-    showarrow=True,
-    arrowhead=2,
-    arrowsize=1,
-    arrowwidth=2,
-    arrowcolor='#2E86AB'
-)
-
-fig_ci.add_annotation(
-    x=metrics['ci_upper'],
-    y=0,
-    text=f'{metrics["ci_upper"]:+.2%}',
-    showarrow=True,
-    arrowhead=2,
-    arrowsize=1,
-    arrowwidth=2,
-    arrowcolor='#2E86AB'
-)
-
-fig_ci.update_layout(
-    title=dict(
-        text=f'95% Доверительный интервал для разницы конверсий',
-        font=dict(size=14, color='#2C3E50')
-    ),
-    yaxis=dict(
-        showticklabels=False,
-        title=''
-    ),
-    xaxis=dict(
-        title='Разница конверсий (T-C)',
-        tickformat='+.1%'
-    ),
-    template='plotly_white',
-    height=200,
-    showlegend=True,
-    legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='center', x=0.5),
-    margin=dict(l=40, r=40, t=60, b=40)
-)
-
-st.plotly_chart(fig_ci, use_container_width=True)
-
-# Дополнительная статистика
-with st.expander("📋 Дополнительная статистика"):
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        st.markdown("**📊 Группы**")
-        st.write(f"Control: {metrics['n_control']:,} пользователей")
-        st.write(f"Treatment: {metrics['n_treatment']:,} пользователей")
-        st.write(f"Всего: {metrics['n_control'] + metrics['n_treatment']:,} пользователей")
-    
-    with col2:
-        st.markdown("**🎯 Конверсия**")
-        st.write(f"Control: {metrics['cr_control']:.2%} ({metrics['clicks_control']:,} кликов)")
-        st.write(f"Treatment: {metrics['cr_treatment']:.2%} ({metrics['clicks_treatment']:,} кликов)")
-        st.write(f"Разница: {metrics['diff_abs']:+.2%} п.п.")
-    
-    with col3:
-        st.markdown("**📈 Статистика**")
-        st.write(f"Z-статистика: {(metrics['cr_treatment'] - metrics['cr_control']) / np.sqrt((metrics['cr_control']*(1-metrics['cr_control'])/metrics['n_control'] + metrics['cr_treatment']*(1-metrics['cr_treatment'])/metrics['n_treatment'])):.4f}")
-        st.write(f"p-value: {metrics['p_value']:.6f}")
-        st.write(f"SRM p-value: {metrics['srm_p_value']:.6f}")
-        
-        if metrics['srm_p_value'] >= 0.05:
-            st.success("✅ SRM пройден")
-        else:
-            st.error("❌ SRM нарушен")
-
 # Итоговый вердикт
 st.markdown("---")
 st.markdown("### 🎯 Итоговый вердикт")
 
 is_significant = metrics['p_value'] < 0.05
 is_srm_valid = metrics['srm_p_value'] >= 0.05
+has_data = metrics['n_control'] > 0 and metrics['n_treatment'] > 0
 
-if is_significant and is_srm_valid and metrics['diff_abs'] > 0:
+if has_data and is_significant and is_srm_valid and metrics['diff_abs'] > 0:
     st.success(
-        """
+        f"""
         ### ✅ РЕКОМЕНДАЦИЯ: ВНЕДРИТЬ НОВЫЙ ДИЗАЙН
         
         **Обоснование:**
-        - 📈 Прирост CTR: **{:.2%} п.п. ({:+.1f}%)**
-        - 📊 Статистическая значимость: **p = {:.6f}** ✅
-        - 📏 Доверительный интервал: **[{:+.2%}, {:+.2%}]**
-        - 🎲 Байесовская вероятность: **{:.1%}**
+        - 📈 Прирост CTR: **{metrics['diff_abs']:+.2%} п.п. ({metrics['diff_rel']:+.1f}%)**
+        - 📊 Статистическая значимость: **p = {metrics['p_value']:.6f}** ✅
+        - 📏 Доверительный интервал: **[{metrics['ci_lower']:+.2%}, {metrics['ci_upper']:+.2%}]**
+        - 🎲 Байесовская вероятность: **{metrics['prob_better']:.1%}**
         - 🛡️ SRM тест: **Пройден** ✅
-        - 🛡️ Защитные метрики: **в норме**
         
         **Ожидаемый бизнес-эффект:** окупаемость разработки менее чем за 6 месяцев.
-        """.format(
-            metrics['diff_abs'], metrics['diff_rel'],
-            metrics['p_value'],
-            metrics['ci_lower'], metrics['ci_upper'],
-            metrics['prob_better']
-        )
+        """
     )
+elif not has_data:
+    st.warning("⚠️ Нет данных для отображения. Измените фильтры.")
 elif not is_srm_valid:
-    st.error(
-        """
-        ### ❌ ЭКСПЕРИМЕНТ НЕВАЛИДЕН
-        
-        **Причина:** SRM тест не пройден (p = {:.6f})
-        
-        **Рекомендация:**
-        - Проверить систему сплитования пользователей
-        - Проверить трекинг конверсий
-        - Перезапустить эксперимент
-        """.format(metrics['srm_p_value'])
-    )
+    st.error(f"### ❌ ЭКСПЕРИМЕНТ НЕВАЛИДЕН\n\n**Причина:** SRM тест не пройден (p = {metrics['srm_p_value']:.6f})")
 elif not is_significant:
-    st.warning(
-        """
-        ### ⚠️ ЭФФЕКТ НЕ ПОДТВЕРЖДЕН
-        
-        **Причина:** p-value = {:.6f} >= 0.05
-        
-        **Рекомендация:**
-        - Увеличить выборку
-        - Проверить, не слишком ли мал MDE
-        - Рассмотреть другой дизайн
-        """.format(metrics['p_value'])
-    )
+    st.warning(f"### ⚠️ ЭФФЕКТ НЕ ПОДТВЕРЖДЕН\n\n**Причина:** p-value = {metrics['p_value']:.6f} >= 0.05")
 else:
-    st.info(
-        """
-        ### ℹ️ ЭФФЕКТ НЕ ОПРЕДЕЛЕН
-        
-        **Рекомендуется дополнительный анализ.**
-        """
-    )
+    st.info("### ℹ️ ЭФФЕКТ НЕ ОПРЕДЕЛЕН\n\nРекомендуется дополнительный анализ.")
 
+# Футер
 st.markdown("---")
-st.caption(f"📊 A/B Test Dashboard • Данные: {df['date'].min().strftime('%d.%m.%Y')} - {df['date'].max().strftime('%d.%m.%Y')} • Всего: {len(df):,} записей")
+st.caption(f"📊 Данные: {df['date'].min().strftime('%d.%m.%Y')} - {df['date'].max().strftime('%d.%m.%Y')} • Всего: {len(df):,} записей")            

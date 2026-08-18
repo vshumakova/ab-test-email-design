@@ -186,7 +186,7 @@ jupyter notebook
 
 ### 6. Запустить дашборд
 ```bash
-streamlit run dashboard.py
+python -m streamlit run app/dashboard.py
 ```
 ## Данные
 

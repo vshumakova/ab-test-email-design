@@ -3,29 +3,11 @@
 """
 import numpy as np
 from scipy import stats
-import pandas as pd
 
 
 def calculate_sample_size(baseline_rate, mde, alpha=0.05, power=0.90, one_sided=True):
     """
     Расчет размера выборки для A/B теста
-    
-    Parameters:
-    -----------
-    baseline_rate : float
-        Базовый показатель (например, CTR)
-    mde : float
-        Минимальный детектируемый эффект (относительный, например 0.20 для 20%)
-    alpha : float
-        Уровень значимости (по умолчанию 0.05)
-    power : float
-        Мощность теста (по умолчанию 0.90)
-    one_sided : bool
-        Односторонний (True) или двухсторонний (False) тест
-    
-    Returns:
-    --------
-    dict : Параметры расчета
     """
     mde_abs = baseline_rate * mde
     test_rate = baseline_rate + mde_abs
@@ -41,8 +23,7 @@ def calculate_sample_size(baseline_rate, mde, alpha=0.05, power=0.90, one_sided=
     n = ((z_alpha + z_beta) ** 2 * p_pooled * (1 - p_pooled) * 2) / (mde_abs ** 2)
     n = int(np.ceil(n))
     
-    # Длительность при ежедневном трафике
-    daily_traffic = 82  # открытий в день (из данных)
+    daily_traffic = 82
     days = int(np.ceil(n / daily_traffic))
     
     return {
@@ -66,23 +47,26 @@ def calculate_sample_size(baseline_rate, mde, alpha=0.05, power=0.90, one_sided=
 def z_test_proportions(successes_a, n_a, successes_b, n_b, one_sided=True):
     """
     Z-тест для сравнения двух пропорций
-    
-    Parameters:
-    -----------
-    successes_a, successes_b : int
-        Количество успехов в группах
-    n_a, n_b : int
-        Размеры групп
-    one_sided : bool
-        Односторонний тест (right-tailed)
-    
-    Returns:
-    --------
-    dict : Результаты теста
     """
-    p_a = successes_a / n_a
-    p_b = successes_b / n_b
-    p_pool = (successes_a + successes_b) / (n_a + n_b)
+    p_a = successes_a / n_a if n_a > 0 else 0
+    p_b = successes_b / n_b if n_b > 0 else 0
+    p_pool = (successes_a + successes_b) / (n_a + n_b) if (n_a + n_b) > 0 else 0.5
+    
+    # 🔧 ИСПРАВЛЕНО: Проверка на нулевое SE
+    if p_pool == 0 or p_pool == 1 or n_a == 0 or n_b == 0:
+        return {
+            'p_a': p_a,
+            'p_b': p_b,
+            'diff': p_b - p_a,
+            'diff_pct': (p_b / p_a - 1) * 100 if p_a > 0 else 0,
+            'se': 0,
+            'z_stat': 0,
+            'p_value': 0.5,
+            'one_sided': one_sided,
+            'significance': '',
+            'significance_text': 'не значимо (недостаточно данных)',
+            'is_significant': False
+        }
     
     se = np.sqrt(p_pool * (1 - p_pool) * (1 / n_a + 1 / n_b))
     z_stat = (p_b - p_a) / se
@@ -110,7 +94,7 @@ def z_test_proportions(successes_a, n_a, successes_b, n_b, one_sided=True):
         'p_a': p_a,
         'p_b': p_b,
         'diff': p_b - p_a,
-        'diff_pct': (p_b / p_a - 1) * 100 if p_a > 0 else np.nan,
+        'diff_pct': (p_b / p_a - 1) * 100 if p_a > 0 else 0,
         'se': se,
         'z_stat': z_stat,
         'p_value': p_value,
@@ -124,19 +108,6 @@ def z_test_proportions(successes_a, n_a, successes_b, n_b, one_sided=True):
 def confidence_interval(diff, se, ci=95):
     """
     Расчет доверительного интервала для разницы пропорций
-    
-    Parameters:
-    -----------
-    diff : float
-        Разница пропорций
-    se : float
-        Стандартная ошибка
-    ci : int
-        Уровень доверия (по умолчанию 95)
-    
-    Returns:
-    --------
-    dict : Доверительный интервал
     """
     z_crit = stats.norm.ppf(1 - (100 - ci) / 200)
     lower = diff - z_crit * se
@@ -155,36 +126,17 @@ def confidence_interval(diff, se, ci=95):
 def bayesian_beta(control_clicks, control_users, treatment_clicks, treatment_users, n_samples=100000):
     """
     Байесовский анализ с использованием бета-распределений
-    
-    Parameters:
-    -----------
-    control_clicks, treatment_clicks : int
-        Количество кликов в группах
-    control_users, treatment_users : int
-        Количество пользователей в группах
-    n_samples : int
-        Количество сэмплов для MCMC
-    
-    Returns:
-    --------
-    dict : Результаты байесовского анализа
     """
-    # Априорные распределения
     a_control, b_control = control_clicks + 1, control_users - control_clicks + 1
     a_treatment, b_treatment = treatment_clicks + 1, treatment_users - treatment_clicks + 1
     
-    # Генерация апостериорных распределений
     np.random.seed(42)
     post_control = stats.beta.rvs(a_control, b_control, size=n_samples)
     post_treatment = stats.beta.rvs(a_treatment, b_treatment, size=n_samples)
     
-    # Вероятность, что treatment лучше control
     prob_better = np.mean(post_treatment > post_control)
-    
-    # Ожидаемая потеря при внедрении
     expected_loss = np.mean(np.maximum(0, post_control - post_treatment))
     
-    # Медианы и интервалы
     median_control = np.median(post_control)
     median_treatment = np.median(post_treatment)
     
@@ -208,22 +160,24 @@ def bayesian_beta(control_clicks, control_users, treatment_clicks, treatment_use
 def srm_test(control_n, treatment_n, expected_ratio=0.5):
     """
     SRM-тест (Sample Ratio Mismatch)
-    Проверяет, соответствует ли распределение пользователей ожидаемому
-    
-    Parameters:
-    -----------
-    control_n, treatment_n : int
-        Количество пользователей в группах
-    expected_ratio : float
-        Ожидаемая доля control (по умолчанию 0.5)
-    
-    Returns:
-    --------
-    dict : Результаты теста
     """
     total = control_n + treatment_n
     expected_control = total * expected_ratio
     expected_treatment = total * (1 - expected_ratio)
+    
+    if expected_control == 0 or expected_treatment == 0:
+        return {
+            'chi2': 0,
+            'p_value': 1.0,
+            'control_n': control_n,
+            'treatment_n': treatment_n,
+            'control_pct': control_n / total * 100 if total > 0 else 50,
+            'treatment_pct': treatment_n / total * 100 if total > 0 else 50,
+            'expected_control': expected_control,
+            'expected_treatment': expected_treatment,
+            'is_valid': True,
+            'is_significant': False
+        }
     
     chi2 = ((control_n - expected_control) ** 2 / expected_control +
             (treatment_n - expected_treatment) ** 2 / expected_treatment)
@@ -246,15 +200,6 @@ def srm_test(control_n, treatment_n, expected_ratio=0.5):
 def mann_whitney_test(control_series, treatment_series):
     """
     U-тест Манна-Уитни для сравнения двух распределений
-    
-    Parameters:
-    -----------
-    control_series, treatment_series : array-like
-        Значения в группах
-    
-    Returns:
-    --------
-    dict : Результаты теста
     """
     stat, p_value = stats.mannwhitneyu(
         treatment_series, control_series,
