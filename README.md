@@ -184,6 +184,10 @@ jupyter notebook
 05_anomaly_investigation.ipynb
 ```
 
+### 6. Запустить дашборд
+```bash
+streamlit run dashboard.py
+```
 ## Данные
 
 Все данные хранятся в папке `data/`:
