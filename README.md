@@ -36,7 +36,7 @@
 ### Ежедневная динамика конверсии
 
 <div align="center">
-  <img src="reports/images/daily_conversion.png" width="80%" alt="Ежедневная динамика конверсии">
+  <img src="reports/images/daily_convertion.png" width="80%" alt="Ежедневная динамика конверсии">
   <p><i>Конверсия в группе Treatment стабильно выше Control на протяжении всего эксперимента</i></p>
 </div>
 
